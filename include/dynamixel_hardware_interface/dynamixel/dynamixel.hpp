@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// Authors: Hye-Jong KIM, Sungho Woo
+// Authors: Hye-Jong KIM, Sungho Woo, Woojin Wie
 
 #ifndef DYNAMIXEL_HARDWARE_INTERFACE__DYNAMIXEL__DYNAMIXEL_HPP_
 #define DYNAMIXEL_HARDWARE_INTERFACE__DYNAMIXEL__DYNAMIXEL_HPP_
@@ -27,6 +27,7 @@
 #include <iostream>
 #include <cstdarg>
 #include <memory>
+#include <functional>
 
 namespace dynamixel_hardware_interface
 {
@@ -109,8 +110,8 @@ class Dynamixel
 {
 private:
   // dxl communication variable
-  dynamixel::PortHandler * port_handler_;
-  dynamixel::PacketHandler * packet_handler_;
+  dynamixel::PortHandler * port_handler_ = nullptr;
+  dynamixel::PacketHandler * packet_handler_ = nullptr;
 
   // dxl info variable from dxl_model file
   DynamixelInfo dxl_info_;
@@ -125,24 +126,35 @@ private:
   std::vector<RWItemList> read_data_list_;
 
   // sync read
-  dynamixel::GroupFastSyncRead * group_sync_read_;
+  dynamixel::GroupSyncRead * group_sync_read_ = nullptr;
+  // bulk read
+  dynamixel::GroupBulkRead * group_bulk_read_ = nullptr;
+  // fast sync read
+  dynamixel::GroupFastSyncRead * group_fast_sync_read_ = nullptr;
+  // fast bulk read
+  dynamixel::GroupFastBulkRead * group_fast_bulk_read_ = nullptr;
+
+  // fast read protocol state (applies to both sync and bulk)
+  bool use_fast_read_protocol_ = true;
+  bool fast_read_permanent_ = false;
+  int fast_read_fail_count_ = 0;
+
   // indirect inform for sync read
   std::map<uint8_t /*id*/, IndirectInfo> indirect_info_read_;
-
-  // bulk read
-  dynamixel::GroupFastBulkRead * group_bulk_read_;
 
   // write item (sync or bulk) variable
   bool write_type_;
   std::vector<RWItemList> write_data_list_;
 
   // sync write
-  dynamixel::GroupSyncWrite * group_sync_write_;
+  dynamixel::GroupSyncWrite * group_sync_write_ = nullptr;
   // indirect inform for sync write
   std::map<uint8_t /*id*/, IndirectInfo> indirect_info_write_;
 
   // bulk write
-  dynamixel::GroupBulkWrite * group_bulk_write_;
+  dynamixel::GroupBulkWrite * group_bulk_write_ = nullptr;
+  // direct inform for bulk write
+  std::map<uint8_t /*id*/, IndirectInfo> direct_info_write_;
 
 public:
   explicit Dynamixel(const char * path);
@@ -166,7 +178,7 @@ public:
   DxlError SetMultiDxlWrite();
 
   // Read Item (sync or bulk)
-  DxlError ReadMultiDxlData();
+  DxlError ReadMultiDxlData(double period_ms);
   // Write Item (sync or bulk)
   DxlError WriteMultiDxlData();
 
@@ -200,12 +212,20 @@ private:
   // SyncRead
   DxlError SetSyncReadItemAndHandler();
   DxlError SetSyncReadHandler(std::vector<uint8_t> id_arr);
-  DxlError GetDxlValueFromSyncRead();
+  DxlError GetDxlValueFromSyncRead(double period_ms);
+  DxlError SetFastSyncReadHandler(std::vector<uint8_t> id_arr);
 
   // BulkRead
   DxlError SetBulkReadItemAndHandler();
   DxlError SetBulkReadHandler(std::vector<uint8_t> id_arr);
-  DxlError GetDxlValueFromBulkRead();
+  DxlError GetDxlValueFromBulkRead(double period_ms);
+  DxlError SetFastBulkReadHandler(std::vector<uint8_t> id_arr);
+
+  // DirectRead for BulkRead
+  DxlError AddDirectRead(uint8_t id, std::string item_name, uint16_t item_addr, uint8_t item_size);
+
+  // Check Indirect Read
+  DxlError CheckIndirectReadAvailable(uint8_t id);
 
   // Read - Indirect Address
   void ResetIndirectRead(std::vector<uint8_t> id_arr);
@@ -214,6 +234,29 @@ private:
     std::string item_name,
     uint16_t item_addr,
     uint8_t item_size);
+
+  // Read - Data Processing
+  DxlError ProcessReadData(
+    uint8_t id,
+    uint16_t indirect_addr,
+    const std::vector<std::string> & item_names,
+    const std::vector<uint8_t> & item_sizes,
+    const std::vector<std::shared_ptr<double>> & data_ptrs,
+    std::function<uint32_t(uint8_t, uint16_t, uint8_t)> get_data_func);
+
+  DxlError ProcessDirectReadData(
+    uint8_t id,
+    const std::vector<uint16_t> & item_addrs,
+    const std::vector<uint8_t> & item_sizes,
+    const std::vector<std::shared_ptr<double>> & data_ptrs,
+    std::function<uint32_t(uint8_t, uint16_t, uint8_t)> get_data_func);
+
+  // Read - Communication
+  DxlError ProcessReadCommunication(
+    dynamixel::PortHandler * port_handler,
+    double period_ms,
+    bool is_sync,
+    bool is_fast);
 
   // SyncWrite
   DxlError SetSyncWriteItemAndHandler();
@@ -225,8 +268,12 @@ private:
   DxlError SetBulkWriteHandler(std::vector<uint8_t> id_arr);
   DxlError SetDxlValueToBulkWrite();
 
+  // Check Indirect Write
+  DxlError CheckIndirectWriteAvailable(uint8_t id);
+
   // Write - Indirect Address
   void ResetIndirectWrite(std::vector<uint8_t> id_arr);
+  void ResetDirectWrite(std::vector<uint8_t> id_arr);
   DxlError AddIndirectWrite(
     uint8_t id,
     std::string item_name,
